@@ -1,0 +1,4 @@
+[submodule "homelab/shared"]
+	path = homelab/shared
+	url = https://github.com/l3ocifer/homelab.git
+	branch = main

@@ -1,0 +1,102 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vimes-ops
+  namespace: agents-shared
+  labels:
+    app.kubernetes.io/name: vimes
+
+---
+# Self-introspection in agents-shared
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vimes-self
+  namespace: agents-shared
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "configmaps", "events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vimes-self
+  namespace: agents-shared
+subjects:
+  - kind: ServiceAccount
+    name: vimes-ops
+    namespace: agents-shared
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: vimes-self
+
+---
+# Cluster-wide read-only audit access. Vimes watches everything,
+# touches nothing. He sees secrets *metadata* (names, mount points),
+# never values — he cross-references with SealedSecret manifests in
+# git for what the values are *supposed* to be.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vimes-cluster-audit
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "services", "nodes", "namespaces",
+                "events", "configmaps", "serviceaccounts",
+                "persistentvolumeclaims", "persistentvolumes", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list"]   # names only — no `get` (no values)
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets",
+                "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications", "applicationsets", "appprojects"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["bitnami.com"]
+    resources: ["sealedsecrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["ingressroutes", "middlewares"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates", "issuers", "clusterissuers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies", "ingresses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets", "podsecuritypolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vimes-cluster-audit
+subjects:
+  - kind: ServiceAccount
+    name: vimes-ops
+    namespace: agents-shared
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vimes-cluster-audit

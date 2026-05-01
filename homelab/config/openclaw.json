@@ -1,0 +1,184 @@
+{
+  // OpenClaw/IronClaw config for Vimes — security & audit agent.
+  // No GPU work. Mostly: parse scan output, run policies, generate
+  // reports. LiteLLM-routed for triage of borderline findings.
+
+  models: {
+    mode: "merge",
+    providers: {
+      litellm: {
+        baseUrl: "http://litellm.litellm.svc:4000/v1",
+        apiKeyEnv: "LITELLM_API_KEY",
+        api: "openai-completions",
+        models: [
+          {
+            id: "chat",
+            name: "Vimes default chat",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 131072,
+            maxTokens: 8192,
+          },
+          {
+            id: "triage",
+            name: "Findings triage",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 32768,
+            maxTokens: 2048,
+          },
+          {
+            id: "long",
+            name: "Long-context audit review",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 1000000,
+            maxTokens: 16384,
+          },
+          {
+            id: "frontier",
+            name: "Frontier — borderline findings only",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 200000,
+            maxTokens: 8192,
+          }
+        ]
+      }
+    }
+  },
+
+  agents: {
+    defaults: {
+      model: {
+        primary:   "litellm/chat",
+        fallbacks: ["litellm/triage", "litellm/long"],
+      },
+      workspace: "/data/workspace",
+      compaction: { mode: "safeguard" },
+      contextPruning: { mode: "cache-ttl", ttl: "1h" },
+      maxConcurrent: 2,
+      thinkingDefault: "low",
+      heartbeat: {
+        every: "30m",
+        target: "https://hc-ping.com/vimes-${HEALTHCHECKS_UUID}",
+      },
+      memorySearch: {
+        enabled: true,
+        sources: ["memory", "sessions"],
+        extraPaths: [
+          "/data/graphs/vimes/pages",
+          "/data/graphs/vimes/journals",
+          "/data/graphs/leo/pages",
+          "/data/graphs/frick/pages",
+          "/data/graphs/frack/pages",
+          "/data/graphs/sancho/pages",
+          "/data/graphs/vetinari/pages",
+          "/data/graphs/quirm/pages",
+          "/data/graphs/puck/pages",
+        ],
+        provider: "local",
+        local: {
+          modelPath: "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf",
+        },
+        fallback: "none",
+        sync: {
+          watch: true,
+          watchDebounceMs: 5000,
+          onSessionStart: true,
+          onSearch: true,
+        },
+        query: {
+          hybrid: {
+            enabled: true,
+            vectorWeight: 0.7,
+            textWeight: 0.3,
+          },
+        },
+      },
+    },
+    list: [
+      {
+        id: "main",
+        default: true,
+        identity: {
+          name: "Vimes",
+          theme: "security and audit — the one who watches the watchers",
+          emoji: "🛡️",
+        },
+      }
+    ],
+  },
+
+  tools: {
+    profile: "minimal",
+    allow: ["read", "exec", "web_search"],
+    exec: {
+      host: "gateway",
+      ask: "off",
+      security: "sandboxed",
+      // Allowlist enforced at gateway. No `write` or `edit` outside
+      // /data (own state). No `kubectl` mutating verbs.
+      allowedCommands: [
+        "kubectl get", "kubectl describe", "kubectl logs",
+        "kubectl auth can-i",
+        "trivy", "kubescape",
+        "gh pr view", "gh pr diff", "gh api",
+        "psql -c", "psql -tAc",
+        "openssl", "gnupg",
+        "rg", "jq",
+      ],
+    },
+    elevated: {
+      enabled: false,
+    },
+  },
+
+  skills: {
+    load: {
+      extraDirs: ["/data/graphs/vimes/pages/skills"],
+    },
+  },
+
+  gateway: {
+    mode: "service",
+    port: 3000,
+    bind: "0.0.0.0",
+  },
+
+  a2a: {
+    listenBind: "0.0.0.0:50051",
+    sharedSecretEnv: "OFP_SHARED_SECRET",
+    peers: [
+      { id: "frick",    url: "http://frick.agents-shared.svc:3000" },
+      { id: "frack",    url: "http://frack.agents-shared.svc:18789" },
+      { id: "sancho",   url: "http://sancho.agents-shared.svc:3001" },
+      { id: "vetinari", url: "http://vetinari.agents-shared.svc:4200" },
+      { id: "quirm",    url: "http://quirm.agents-shared.svc:3001" },
+      { id: "puck",     url: "http://puck.agents-shared.svc:18789" }
+    ]
+  },
+
+  cron: [
+    {
+      schedule: "30 0 * * *",
+      prompt: "Run the nightly security scan: trivy on every running image, kubescape against the cluster, all custom policies in vimes-graph/pages/policies/. Save raw output to vimes-graph/pages/runs/. Triage findings by severity. Critical findings ntfy-page Frick + Leo immediately. Append a one-line summary to leo-graph/pages/world/audit-log.md."
+    },
+    {
+      schedule: "30 7 * * *",
+      prompt: "Compose and send the morning audit report to Leo via Matrix: yesterday's red, yellow, and the trend line. If everything is green, say so in one sentence. Save the report to vimes-graph/pages/reports/."
+    },
+    {
+      schedule: "0 12 * * *",
+      prompt: "Mid-day spot check: list any new pods, ClusterRoleBindings, or IngressRoutes created since the nightly scan. Audit each before they're a day old. ntfy if any critical."
+    },
+    {
+      schedule: "0 12 * * 0",
+      prompt: "Weekly methodology review. Re-grade findings from the past 7 days. Compute false-positive rate. Identify any policy that produced FPs and either tighten it or retire it. Send Quirm a list of changes for peer review. Save to vimes-graph/pages/methodology-reviews/."
+    }
+  ]
+}

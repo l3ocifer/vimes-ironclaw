@@ -1,0 +1,33 @@
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vimes
+  namespace: agents-shared
+  labels:
+    app.kubernetes.io/name: vimes
+spec:
+  entryPoints: [websecure]
+  routes:
+    - match: Host(`vimes.leopaska.xyz`)
+      kind: Rule
+      services:
+        - { name: vimes, port: 3000 }
+      middlewares:
+        - { name: authelia, namespace: authelia }
+  tls:
+    secretName: vimes-leopaska-tls
+    domains:
+      - main: vimes.leopaska.xyz
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: vimes-leopaska-tls
+  namespace: agents-shared
+spec:
+  secretName: vimes-leopaska-tls
+  dnsNames: [vimes.leopaska.xyz]
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
