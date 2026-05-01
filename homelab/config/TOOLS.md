@@ -54,7 +54,8 @@ Internal-facing only.
 - `kubectl` — read-only k8s introspection
 - `gh` — GitHub PR review (greps for plaintext secrets, audits
   permissions on workflow files)
-- `1password-cli` — credential lookup for self-only secrets
+- `bw` (Bitwarden CLI against Vaultwarden) — read-only credential
+  lookups for self-only secrets and rotation/expiry audit checks
 - `psql` — direct sibling DB introspection via `*_ro` roles
 - Custom policies in `vimes-graph/pages/policies/` — yaml/rego/python
 
@@ -129,6 +130,6 @@ Provided by `vimes-secrets` SealedSecret in `agents-shared`:
 | `MATRIX_HOMESERVER` + `MATRIX_ACCESS_TOKEN` | `@vimes:leopaska.xyz` |
 | `NTFY_TOKEN` | findings notifications |
 | `OFP_SHARED_SECRET` | A2A mutual auth |
-| `OP_SERVICE_ACCOUNT_TOKEN` | 1Password (own credentials only) |
+| `BW_CLIENTID` + `BW_CLIENTSECRET` | Vaultwarden API-key login for read-only audit (own credentials only) |
 | `HEALTHCHECKS_UUID` | per-agent UUID for hc-ping.com heartbeats |
 | `GITHUB_TOKEN` | gh CLI for PR audit (read-only) |

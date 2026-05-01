@@ -9,7 +9,8 @@ Vimes-IronClaw releases.
 - Initial homelab/ overlay scaffolding (mirrors frick-ironclaw layout
   — same upstream framework, different role).
 - Dockerfile builds IronClaw from local fork + adds audit toolchain:
-  `trivy`, `kubescape`, `gh`, `1password-cli`, `kubectl`, `psql`.
+  `trivy`, `kubescape`, `gh`, `bw` (Bitwarden CLI against Vaultwarden,
+  read-only), `kubectl`, `psql`.
 - k8s manifests for `agents-shared` namespace + floating
   (soft-prefer thebeast for RAM) + Longhorn-backed (longhorn-single
   state, longhorn-rwx graphs, all 7 sibling graphs mounted RO).

@@ -60,7 +60,7 @@ RUN apt-get update \
       ca-certificates curl wget tini \
       libssl3 \
       python3 python3-pip \
-      jq ripgrep git \
+      jq ripgrep git unzip \
       postgresql-client \
       gnupg lsb-release \
       # Security tooling Vimes uses for audit work
@@ -73,15 +73,22 @@ RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kub
       -o /usr/local/bin/kubectl \
  && chmod +x /usr/local/bin/kubectl
 
-# 1Password CLI
-RUN curl -sSfO https://downloads.1password.com/linux/keys/1password.asc \
- && gpg --dearmor 1password.asc \
- && mv 1password.asc.gpg /usr/share/keyrings/1password-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/1password-archive-keyring.gpg] https://downloads.1password.com/linux/debian/$(dpkg --print-architecture) stable main" \
-      > /etc/apt/sources.list.d/1password.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends 1password-cli \
- && rm -rf /var/lib/apt/lists/* 1password.asc
+# Bitwarden CLI (`bw`) — credential lookups against the cluster's
+# Vaultwarden (https://warden.leopaska.xyz). Vimes runs read-only:
+# `bw get item` / `bw list items` for audit and rotation checks; never
+# `bw edit`. Persistent Vimes creds arrive via SealedSecrets → envFrom.
+ARG BW_VERSION=2026.4.1
+RUN ARCH="$(dpkg --print-architecture)" \
+ && case "$ARCH" in \
+      amd64) BW_ARCH=linux ;; \
+      arm64) BW_ARCH=linux-arm64 ;; \
+      *) echo "unsupported arch: $ARCH" >&2; exit 1 ;; \
+    esac \
+ && curl -fsSL "https://github.com/bitwarden/clients/releases/download/cli-v${BW_VERSION}/bw-oss-${BW_ARCH}-${BW_VERSION}.zip" \
+        -o /tmp/bw.zip \
+ && unzip -q /tmp/bw.zip -d /usr/local/bin \
+ && chmod +x /usr/local/bin/bw \
+ && rm -f /tmp/bw.zip
 
 # trivy — container vulnerability scanner (Vimes uses it nightly)
 RUN curl -sSfL https://aquasecurity.github.io/trivy-repo/deb/public.key \
