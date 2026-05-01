@@ -22,14 +22,17 @@ WORKDIR /app
 
 COPY Cargo.toml Cargo.lock ./
 
-COPY src/        src/
-COPY migrations/ migrations/
-COPY wit/        wit/
-COPY vendor/     vendor/
-COPY skills/     skills/
-COPY build.rs    ./
-
-RUN mkdir -p examples && echo 'fn main(){}' > examples/test_heartbeat.rs
+COPY src/           src/
+COPY crates/        crates/
+COPY migrations/    migrations/
+COPY registry/      registry/
+COPY wit/           wit/
+COPY skills/        skills/
+COPY channels-src/  channels-src/
+COPY tools-src/     tools-src/
+COPY tests/         tests/
+COPY build.rs       ./
+COPY providers.json ./
 
 ARG LTO=true
 ARG CODEGEN_UNITS=1
@@ -38,8 +41,6 @@ ENV CARGO_PROFILE_RELEASE_LTO=${LTO} \
 
 RUN cargo build --release --bin ironclaw \
  && strip target/release/ironclaw
-
-RUN cargo install tilth --root /usr/local
 
 # ─── Stage 2: runtime ────────────────────────────────────────────────
 FROM debian:bookworm-slim
@@ -95,7 +96,6 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/ironclaw /usr/local/bin/ironclaw
-COPY --from=builder /usr/local/bin/tilth          /usr/local/bin/tilth
 COPY --from=builder /app/migrations               /app/migrations
 COPY --from=builder /app/skills                   /usr/local/bin/skills
 
