@@ -34,6 +34,16 @@ COPY tests/         tests/
 COPY build.rs       ./
 COPY providers.json ./
 
+# Patch upstream nearai/ironclaw `crates/ironclaw_skills/src/registry.rs`:
+# `format!("sha256:{:x}", result)` doesn't compile with rustc 1.92 +
+# generic-array 0.14 + edition 2024 (LowerHex no longer auto-impls on the
+# GenericArray output of sha2::Sha256::finalize). Replace with byte-wise
+# hex which only needs LowerHex on individual u8s. Tracked in
+# homelab/PATCHES.md. Drop this RUN once upstream fixes registry.rs.
+RUN /bin/sed -i 's#format!("sha256:{:x}", result)#format!("sha256:{}", result.iter().map(|b| format!("{:02x}", b)).collect::<String>())#' \
+      crates/ironclaw_skills/src/registry.rs \
+ && /bin/grep -F 'result.iter().map(' crates/ironclaw_skills/src/registry.rs
+
 ARG LTO=true
 ARG CODEGEN_UNITS=1
 ENV CARGO_PROFILE_RELEASE_LTO=${LTO} \
