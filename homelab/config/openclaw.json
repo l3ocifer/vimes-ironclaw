@@ -163,6 +163,19 @@
     ]
   },
 
+  // Fleet event bus — durable async A2A backbone shared by all
+  // seven agents. Vimes is the security/audit agent so it ingests
+  // EVERY event — that's its job. Filtering happens downstream.
+  fleet: {
+    enabled: true,
+    agentId: "vimes",
+    databaseUrlEnv: "FLEET_DATABASE_URL",
+    notifyChannel: "fleet_events_new",
+    inbound: {
+      predicate: "true",
+    },
+  },
+
   cron: [
     {
       schedule: "30 0 * * *",
