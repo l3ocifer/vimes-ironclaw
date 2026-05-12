@@ -1,7 +1,16 @@
 {
   // OpenClaw/IronClaw config for Vimes — security & audit agent.
   // No GPU work. Mostly: parse scan output, run policies, generate
-  // reports. LiteLLM-routed for triage of borderline findings.
+  // reports. Routes through the in-cluster LiteLLM proxy.
+  //
+  // Fleet inference policy: `chat` (vllm-chat / Qwen3.5 27B AWQ on thebeast)
+  // is the default; `long` and `frontier` are available for opt-in. There is
+  // no separate `triage` alias — borderline findings escalate to `frontier`
+  // explicitly via per-task overrides (Vetinari handles the deep weekly
+  // audit synthesis).
+  //
+  // contextWindow values mirror max_input_tokens from
+  // homelab/argocd/apps/_inference/40-litellm-config.yaml. Keep in sync.
 
   models: {
     mode: "merge",
@@ -13,38 +22,29 @@
         models: [
           {
             id: "chat",
-            name: "Vimes default chat",
+            name: "Vimes default chat (vllm-chat / Qwen3.5 27B AWQ)",
             reasoning: false,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 131072,
-            maxTokens: 8192,
-          },
-          {
-            id: "triage",
-            name: "Findings triage",
-            reasoning: false,
-            input: ["text"],
-            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 32768,
-            maxTokens: 2048,
+            contextWindow: 20480,
+            maxTokens: 4096,
           },
           {
             id: "long",
-            name: "Long-context audit review",
+            name: "Long-context audit review (vllm-long / Qwen3.5 9B AWQ, 262K)",
             reasoning: false,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 1000000,
-            maxTokens: 16384,
+            contextWindow: 262144,
+            maxTokens: 8192,
           },
           {
             id: "frontier",
-            name: "Frontier — borderline findings only",
+            name: "Frontier — borderline findings only (Qwen3-Coder 480B MoE, slow)",
             reasoning: true,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-            contextWindow: 200000,
+            contextWindow: 65536,
             maxTokens: 8192,
           }
         ]
@@ -55,8 +55,11 @@
   agents: {
     defaults: {
       model: {
+        // Fleet default: chat. Long/frontier are opt-in per-task only; do
+        // not auto-fallback to long because a wedged long backend can hang
+        // normal agent work.
         primary:   "litellm/chat",
-        fallbacks: ["litellm/triage", "litellm/long"],
+        fallbacks: [],
       },
       workspace: "/data/workspace",
       compaction: { mode: "safeguard" },
