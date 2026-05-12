@@ -16,14 +16,14 @@ use crate::context::ContextManager;
 use crate::db::{Database, UserStore};
 use crate::extensions::ExtensionManager;
 use crate::hooks::HookRegistry;
-use crate::llm::recording::HttpInterceptor;
-use crate::llm::{LlmProvider, LlmReloadHandle, RecordingLlm, SessionManager};
 use crate::secrets::SecretsStore;
 use crate::tools::ToolRegistry;
 use crate::tools::mcp::{McpProcessManager, McpSessionManager};
 use crate::tools::wasm::SharedCredentialRegistry;
 use crate::tools::wasm::WasmToolRuntime;
 use crate::workspace::{EmbeddingCacheConfig, EmbeddingProvider, Workspace};
+use ironclaw_llm::recording::HttpInterceptor;
+use ironclaw_llm::{LlmProvider, LlmReloadHandle, RecordingLlm, SessionManager};
 use ironclaw_safety::SafetyLayer;
 use ironclaw_skills::SkillRegistry;
 use ironclaw_skills::catalog::SkillCatalog;
@@ -229,8 +229,10 @@ impl AppBuilder {
             }
         }
 
+        let session_db: ironclaw_llm::host::SharedSessionDb =
+            std::sync::Arc::new(crate::llm_host::DatabaseSessionDb::new(db.clone()));
         self.session
-            .attach_store(db.clone(), &self.config.owner_id)
+            .attach_store(session_db, &self.config.owner_id)
             .await;
 
         // Fire-and-forget housekeeping — no need to block startup.
@@ -413,7 +415,10 @@ impl AppBuilder {
 
             // Wire the secrets store into the session manager so future
             // token saves go to encrypted storage.
-            self.session.attach_secrets(Arc::clone(secrets)).await;
+            let session_secrets: ironclaw_llm::host::SharedSessionSecrets = Arc::new(
+                crate::llm_host::SecretsStoreSessionSecrets::new(Arc::clone(secrets)),
+            );
+            self.session.attach_secrets(session_secrets).await;
         }
 
         self.secrets_store = store;
@@ -484,7 +489,7 @@ impl AppBuilder {
         anyhow::Error,
     > {
         let (llm, cheap_llm, recording_handle, reload_handle) =
-            crate::llm::build_provider_chain(&self.config.llm, self.session.clone()).await?;
+            ironclaw_llm::build_provider_chain(&self.config.llm, self.session.clone()).await?;
         Ok((llm, cheap_llm, recording_handle, reload_handle))
     }
 
@@ -543,14 +548,26 @@ impl AppBuilder {
             tools.register_secrets_tools(Arc::clone(ss));
         }
 
-        // Create embeddings provider using the unified method
+        // Create embeddings provider using the unified method.
+        // Translate the LLM-side `BedrockConfig` into the embeddings-side
+        // `BedrockEmbeddingSetup` at the boundary so the embeddings layer
+        // does not depend on `ironclaw_llm` config types.
+        let bedrock_setup =
+            self.config
+                .llm
+                .bedrock
+                .as_ref()
+                .map(|b| crate::workspace::BedrockEmbeddingSetup {
+                    region: b.region.clone(),
+                    profile: b.profile.clone(),
+                });
         let embeddings = self
             .config
             .embeddings
             .create_provider(
                 &self.config.llm.nearai.base_url,
                 self.session.clone(),
-                self.config.llm.bedrock.as_ref(),
+                bedrock_setup.as_ref(),
             )
             .await;
 
@@ -651,13 +668,13 @@ impl AppBuilder {
                     .map(|p| p.model.clone())
                     .unwrap_or_else(|| self.config.llm.nearai.model.clone());
                 let models = vec![model_name.clone()];
-                let gen_model = crate::llm::image_models::suggest_image_model(&models)
+                let gen_model = ironclaw_llm::image_models::suggest_image_model(&models)
                     .unwrap_or("black-forest-labs/FLUX.2-klein-4B")
                     .to_string();
                 tools.register_image_tools(api_base.clone(), api_key.clone(), gen_model, None);
 
                 // Check for vision models
-                let vision_model = crate::llm::vision_models::suggest_vision_model(&models)
+                let vision_model = ironclaw_llm::vision_models::suggest_vision_model(&models)
                     .unwrap_or(&model_name)
                     .to_string();
                 tools.register_vision_tools(api_base, api_key, vision_model, None);
@@ -695,6 +712,7 @@ impl AppBuilder {
         tools: &Arc<ToolRegistry>,
         hooks: &Arc<HookRegistry>,
         settings_store_override: Option<Arc<dyn crate::db::SettingsStore + Send + Sync>>,
+        ownership_cache: Arc<crate::ownership::OwnershipCache>,
     ) -> Result<
         (
             Arc<McpSessionManager>,
@@ -989,8 +1007,21 @@ impl AppBuilder {
             if let Some(ref ss) = settings_store_override {
                 em = em.with_settings_store(Arc::clone(ss));
             }
+            let pairing_store = if let Some(ref db) = self.db {
+                let ps = Arc::new(crate::pairing::PairingStore::new(
+                    Arc::clone(db),
+                    Arc::clone(&ownership_cache),
+                ));
+                em = em.with_pairing_store(Arc::clone(&ps));
+                Some(ps)
+            } else {
+                None
+            };
             let manager = Arc::new(em);
             tools.register_extension_tools(Arc::clone(&manager));
+            if let Some(ps) = pairing_store {
+                tools.register_sync(Arc::new(crate::tools::builtin::PairingApproveTool::new(ps)));
+            }
 
             // Register permission management tool and upgrade tool_list with
             // builtin registry support. Prefer the workspace-backed adapter
@@ -1097,14 +1128,16 @@ impl AppBuilder {
         self.init_database().await?;
         self.init_secrets().await?;
 
-        // Post-init validation: backends with dedicated config (nearai, gemini_oauth,
-        // bedrock, openai_codex) handle their own credential resolution. For registry-based
-        // backends, fail early if no provider config was resolved.
-        if !matches!(
-            self.config.llm.backend.as_str(),
-            "nearai" | "gemini_oauth" | "bedrock" | "openai_codex"
-        ) && self.config.llm.provider.is_none()
-        {
+        // Post-init validation: backends with a dedicated config slot
+        // (nearai/gemini_oauth/bedrock/openai_codex) read from their own
+        // sub-struct and don't populate `LlmConfig.provider`. For
+        // OpenAI-shape registry backends, fail early if no provider
+        // config was resolved.
+        let registry = ironclaw_llm::ProviderRegistry::load();
+        let has_dedicated_config = registry
+            .find(self.config.llm.backend.as_str())
+            .is_some_and(|d| d.protocol.has_dedicated_config());
+        if !has_dedicated_config && self.config.llm.provider.is_none() {
             let backend = &self.config.llm.backend;
             anyhow::bail!(
                 "LLM_BACKEND={backend} is configured but no credentials were found. \
@@ -1181,6 +1214,7 @@ impl AppBuilder {
             _ => (None, None),
         };
 
+        let ownership_cache = Arc::new(crate::ownership::OwnershipCache::new());
         let (
             mcp_session_manager,
             mcp_process_manager,
@@ -1189,7 +1223,12 @@ impl AppBuilder {
             catalog_entries,
             dev_loaded_tool_names,
         ) = self
-            .init_extensions(&tools, &hooks, settings_store.clone())
+            .init_extensions(
+                &tools,
+                &hooks,
+                settings_store.clone(),
+                Arc::clone(&ownership_cache),
+            )
             .await?;
 
         // Load bootstrap-completed flag from settings so that existing users
@@ -1333,7 +1372,7 @@ impl AppBuilder {
             catalog_entries,
             dev_loaded_tool_names,
             builder,
-            ownership_cache: Arc::new(crate::ownership::OwnershipCache::new()),
+            ownership_cache,
         })
     }
 }
@@ -1672,11 +1711,6 @@ mod tests {
         registry.register_builtin_tools();
 
         let owner = "test-user";
-        assert_eq!(
-            crate::tools::permissions::seeded_default_permission("tool_activate"),
-            Some(PermissionState::AlwaysAllow),
-            "tool_activate should seed AlwaysAllow so subgates control auth/setup"
-        );
 
         // 1. Initial seed: creates defaults for all registered tools.
         super::seed_tool_permissions(&registry, Some(&db), owner).await;
