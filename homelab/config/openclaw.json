@@ -56,8 +56,9 @@
           //   - novel-CVE deep-dives where context > 65 K tokens
           // Day-to-day audit pipeline keeps using `frontier`. Bridge
           // policy enforces both the 7-day quota and Vimes's 14% share.
-          // On 429 the LiteLLM router cascades sonnet→chat→frontier
-          // and opus→frontier→long, so cron jobs always complete.
+          // The agent may choose any Claude Code model at call time via
+          // claude-code/<cli-model>. On 429 the LiteLLM router falls back
+          // to local models so cron jobs always complete.
           {
             id: "claude-sonnet-max",
             name: "Claude Sonnet 4.6 via household Max subscription",
@@ -70,6 +71,15 @@
           {
             id: "claude-opus-max",
             name: "Claude Opus 4.7 via household Max subscription",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 200000,
+            maxTokens: 8192,
+          },
+          {
+            id: "claude-code/*",
+            name: "Claude Code model selected at call time",
             reasoning: true,
             input: ["text"],
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
