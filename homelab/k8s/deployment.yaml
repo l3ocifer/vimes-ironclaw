@@ -52,6 +52,7 @@ spec:
           env:
             - { name: AGENT_NAME, value: "Vimes" }
             - { name: AGENT_ID, value: "vimes" }
+            - { name: RUST_LOG, value: "ironclaw=info,tower_http=warn" }
             - { name: TZ, value: "America/New_York" }
             - { name: HARDSTOP_PATH, value: "/data/HARDSTOP-VIMES" }
             - { name: GATEWAY_ENABLED, value: "true" }
