@@ -46,6 +46,35 @@
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             contextWindow: 65536,
             maxTokens: 8192,
+          },
+
+          // ─── Claude Max (via household claude-bridge) ──────────────
+          // Tier-3 budget share: 14% of weekly Claude pool. Use only
+          // for things where a smaller-model false negative on a
+          // security finding would cost real money or trust:
+          //   - quarterly methodology review of false-positive rate
+          //   - novel-CVE deep-dives where context > 65 K tokens
+          // Day-to-day audit pipeline keeps using `frontier`. Bridge
+          // policy enforces both the 7-day quota and Vimes's 14% share.
+          // On 429 the LiteLLM router cascades sonnet→chat→frontier
+          // and opus→frontier→long, so cron jobs always complete.
+          {
+            id: "claude-sonnet-max",
+            name: "Claude Sonnet 4.6 via household Max subscription",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 200000,
+            maxTokens: 8192,
+          },
+          {
+            id: "claude-opus-max",
+            name: "Claude Opus 4.7 via household Max subscription",
+            reasoning: true,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 200000,
+            maxTokens: 8192,
           }
         ]
       }
