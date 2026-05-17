@@ -9,11 +9,11 @@ ironclaw_authorization = { path = "../ironclaw_authorization" }
 ironclaw_events = { path = "../ironclaw_events" }
 ironclaw_host_api = { path = "../ironclaw_host_api" }
 ironclaw_run_state = { path = "../ironclaw_run_state" }
-thiserror = "2"
+thiserror = "2.0.18"
 
 [dev-dependencies]
-async-trait = "0.1"
+async-trait = "0.1.89"
 ironclaw_filesystem = { path = "../ironclaw_filesystem" }
-serde_json = "1"
-tempfile = "3"
-tokio = { version = "1", features = ["macros", "rt"] }
+serde_json = "1.0.149"
+tempfile = "3.27.0"
+tokio = { version = "1.52.3", features = ["macros", "rt"] }
