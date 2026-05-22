@@ -27,7 +27,8 @@ vimes-ironclaw/                      ← repo root
     ├── k8s/                          ← kustomize tree
     ├── config/                       ← SOUL.md, TOOLS.md, openclaw.json
     ├── shared/                       ← submodule → l3ocifer/homelab
-    ├── .github/workflows/
+    ├── ../.forgejo/workflows/        ← primary homelab image build
+    ├── ../.github/workflows/         ← backup CI + manual GHCR fallback
     ├── PATCHES.md, CHANGELOG.md, README.md
 ```
 
@@ -53,7 +54,7 @@ git clone https://github.com/l3ocifer/vimes-ironclaw
 cd vimes-ironclaw
 git remote add upstream https://github.com/nearai/ironclaw.git
 docker build -f homelab/Dockerfile \
-  -t ghcr.io/l3ocifer/vimes-ironclaw:dev .
+  -t git.leopaska.xyz/leo/vimes-ironclaw:dev .
 ```
 
 ## Sync from upstream
