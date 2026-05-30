@@ -331,7 +331,15 @@ async fn async_main() -> anyhow::Result<()> {
             return Ok(());
         }
         None | Some(Command::Run) => {
-            // Continue to run agent
+            // S7 (homelab/docs/status/STATUS.md, 2026-05-29): the explicit
+            // subcommand branches above call init_cli_tracing() / init_worker_tracing()
+            // before returning, but the default agent-run path used to fall
+            // through with no tracing subscriber installed at all — so
+            // RUST_LOG / IRONCLAW_LOG were silently dropped and `agent.log`
+            // came up empty in the homelab pod. Initialize the worker
+            // tracing filter here so the long-running agent honors RUST_LOG
+            // (defaults to ironclaw=info per init_worker_tracing()).
+            init_worker_tracing();
         }
     }
 
