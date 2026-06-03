@@ -331,15 +331,18 @@ async fn async_main() -> anyhow::Result<()> {
             return Ok(());
         }
         None | Some(Command::Run) => {
-            // S7 (homelab/docs/status/STATUS.md, 2026-05-29): the explicit
-            // subcommand branches above call init_cli_tracing() / init_worker_tracing()
-            // before returning, but the default agent-run path used to fall
-            // through with no tracing subscriber installed at all — so
-            // RUST_LOG / IRONCLAW_LOG were silently dropped and `agent.log`
-            // came up empty in the homelab pod. Initialize the worker
-            // tracing filter here so the long-running agent honors RUST_LOG
-            // (defaults to ironclaw=info per init_worker_tracing()).
-            init_worker_tracing();
+            // The default agent-run path falls through to the main flow,
+            // which installs the gateway tracing subscriber via
+            // `web::log_layer::init_tracing()` below (it reads RUST_LOG /
+            // IRONCLAW_LOG, defaulting to `ironclaw=info,tower_http=warn`).
+            // Do NOT call init_worker_tracing() here: it also calls
+            // `.init()` (set_global_default), so the second subscriber
+            // install at init_tracing() panics with "a global default trace
+            // dispatcher has already been set" (exit 101), crash-looping the
+            // pod. The S7 empty-`agent.log` fix (2026-05-29) added a redundant
+            // init_worker_tracing() here that collided with init_tracing();
+            // init_tracing() already honors RUST_LOG, so no init is needed in
+            // this branch.
         }
     }
 
