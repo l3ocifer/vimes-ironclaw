@@ -186,6 +186,31 @@
     },
   },
 
+  // Federated MCP servers (homelab `mcp` namespace). Vimes is the
+  // read-only auditor: k8s-mcp-vimes runs --read-only on the built-in
+  // `view` ClusterRole (no secrets), grafana is Viewer-scoped, forgejo
+  // is for auditing PRs/issues. No write surface by construction.
+  // See homelab/docs/agent-mcp-integration.md.
+  mcp: {
+    servers: {
+      kubernetes: {
+        url: "http://k8s-mcp-vimes.mcp.svc.cluster.local:8080/mcp",
+        transport: "streamable-http",
+      },
+      grafana: {
+        url: "http://grafana-mcp.mcp.svc.cluster.local:8000/mcp",
+        transport: "streamable-http",
+      },
+      forgejo: {
+        url: "http://forgejo-mcp.mcp.svc.cluster.local:3000/mcp",
+        transport: "streamable-http",
+        toolFilter: {
+          exclude: ["create_*", "update_*", "delete_*", "merge_*", "edit_*"],
+        },
+      },
+    },
+  },
+
   gateway: {
     mode: "service",
     port: 3000,
