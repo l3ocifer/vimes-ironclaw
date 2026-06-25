@@ -1095,6 +1095,9 @@ impl Agent {
                                 self.cheap_llm().clone(),
                                 Some(notify_tx),
                                 system,
+                                Some(self.tools().clone()),
+                                Some(self.safety().clone()),
+                                self.deps.extension_manager.clone(),
                             ))
                         } else {
                             tracing::warn!("Multi-tenant heartbeat requires a database store");
@@ -1108,6 +1111,9 @@ impl Agent {
                             self.cheap_llm().clone(),
                             Some(notify_tx),
                             self.system_store(),
+                            Some(self.tools().clone()),
+                            Some(self.safety().clone()),
+                            self.deps.extension_manager.clone(),
                         ))
                     }
                 } else {
