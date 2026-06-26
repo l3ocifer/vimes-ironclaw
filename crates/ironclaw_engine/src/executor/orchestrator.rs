@@ -22,8 +22,6 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use std::collections::HashMap;
-
 use monty::{
     ExtFunctionResult, LimitedTracker, MontyObject, MontyRun, NameLookupResult, PrintWriter,
     ResourceLimits, RunProgress,
@@ -46,7 +44,7 @@ use crate::types::message::ThreadMessage;
 use crate::types::project::ProjectId;
 use crate::types::shared_owner_id;
 use crate::types::step::{ActionCall, StepId, TokenUsage};
-use crate::types::thread::{ActiveSkillProvenance, Thread, ThreadState};
+use crate::types::thread::{ActiveSkillProvenance, LlmCallPurpose, Thread, ThreadState};
 
 /// The compiled-in default orchestrator (v0).
 pub(crate) const DEFAULT_ORCHESTRATOR: &str = include_str!("../../orchestrator/default.py");
@@ -803,7 +801,7 @@ async fn handle_llm_complete(
             .and_then(|cfg| cfg.get("model"))
             .and_then(|v| v.as_str())
             .map(String::from),
-        metadata: HashMap::new(),
+        metadata: thread.llm_usage_metadata(LlmCallPurpose::Chat),
     };
 
     match deps.llm.complete(&messages, &actions, &config).await {
@@ -2059,8 +2057,20 @@ async fn execute_single_action_with_inline_retry(
         accumulated_events.push(event);
 
         // Refund the lease use this attempt consumed; we'll re-consume
-        // on retry if the user approves.
-        let _ = leases.refund_use(current_lease.id).await;
+        // on retry if the user approves. EXCEPTION: when the gate carries
+        // cached `resume_output`, the action has already executed (post-
+        // execution Authentication gate) and the cached-output branch
+        // below will return without re-consuming. Refunding now would
+        // let a successful side-effecting action consume zero lease
+        // uses. See matching guards in `scripting::resolve_tool_future`
+        // and `structured::execute_with_inline_gate_retry`. Tracked by
+        // the #3559 security review.
+        let gate_carries_resume_output = result_json
+            .get("resume_output")
+            .is_some_and(|v| !v.is_null());
+        if !gate_carries_resume_output {
+            let _ = leases.refund_use(current_lease.id).await;
+        }
 
         // Use the gate-provided parameters from the GatePaused payload,
         // not the original caller `params`: the safety layer may have
@@ -2125,8 +2135,42 @@ async fn execute_single_action_with_inline_retry(
             return (result_json, accumulated_events, denial, current_lease.id);
         }
 
-        // Approved. Re-consume a lease use and mark the next call as
-        // pre-approved.
+        // Approved. If the bridge cached the action's output before raising
+        // this gate (post-execution Authentication gate path — see
+        // `effect_adapter::auth_gate_from_extension_result` and the
+        // `check_tool_readiness` path), the action has already run and we
+        // just needed user-side resolution. Return the cached output
+        // instead of re-executing. Without this shortcut, retrying
+        // `tool_install` re-downloads the WASM and runs through the
+        // `effect_adapter::enforce_tool_permission` approval check a
+        // second time, raising a fresh gate the user has no way to
+        // resolve. Tracked by #3533.
+        if let Some(cached_output) = result_json.get("resume_output").cloned()
+            && !cached_output.is_null()
+        {
+            let event = EventKind::ActionExecuted {
+                step_id: exec_ctx.step_id,
+                action_name: name.to_string(),
+                call_id: call_id.to_string(),
+                duration_ms: 0,
+                params_summary: params_summary.clone(),
+            };
+            accumulated_events.push(event);
+            let result_json = serde_json::json!({
+                "action_name": name,
+                "output": cached_output.clone(),
+                "is_error": false,
+                "duration_ms": 0,
+            });
+            return (
+                result_json,
+                accumulated_events,
+                cached_output,
+                current_lease.id,
+            );
+        }
+
+        // Re-consume a lease use and mark the next call as pre-approved.
         match leases.find_and_consume(thread_id, name).await {
             Ok(new_lease) => {
                 current_lease = new_lease;
@@ -4201,11 +4245,11 @@ mod tests {
 
     // ── handle_llm_complete model forwarding ────────────────────
 
-    /// LLM backend that records the model from each `complete()` call.
+    /// LLM backend that records each `complete()` config.
     /// Used to verify the orchestrator's __llm_complete__ host fn forwards
-    /// `explicit_config["model"]` onto `LlmCallConfig.model`.
+    /// `explicit_config` and thread metadata onto `LlmCallConfig`.
     struct ModelCapturingLlm {
-        captured: tokio::sync::Mutex<Vec<Option<String>>>,
+        captured: tokio::sync::Mutex<Vec<LlmCallConfig>>,
     }
 
     #[async_trait::async_trait]
@@ -4220,7 +4264,7 @@ mod tests {
             _actions: &[crate::types::capability::ActionDef],
             config: &LlmCallConfig,
         ) -> Result<crate::traits::llm::LlmOutput, EngineError> {
-            self.captured.lock().await.push(config.model.clone());
+            self.captured.lock().await.push(config.clone());
             Ok(crate::traits::llm::LlmOutput {
                 response: crate::types::step::LlmResponse::Text("ok".into()),
                 usage: crate::types::step::TokenUsage::default(),
@@ -4436,7 +4480,66 @@ mod tests {
         assert!(matches!(result, ExtFunctionResult::Return(_)));
         let captured = concrete.captured.lock().await;
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].as_deref(), Some("gpt-4o"));
+        assert_eq!(captured[0].model.as_deref(), Some("gpt-4o"));
+    }
+
+    #[tokio::test]
+    async fn execute_orchestrator_llm_complete_forwards_thread_usage_metadata() {
+        let concrete = Arc::new(ModelCapturingLlm {
+            captured: tokio::sync::Mutex::new(Vec::new()),
+        });
+        let llm: Arc<dyn LlmBackend> = Arc::clone(&concrete) as Arc<dyn LlmBackend>;
+        let effects: Arc<dyn EffectExecutor> = Arc::new(NoopEffects);
+        let leases = Arc::new(LeaseManager::new());
+        let policy = Arc::new(PolicyEngine::new());
+        let store: Arc<dyn Store> = Arc::new(crate::tests::InMemoryStore::with_docs(vec![]));
+        let (_signal_tx, mut signal_rx) = crate::runtime::messaging::signal_channel(1);
+        let gate_controller = crate::gate::CancellingGateController::arc();
+
+        let mut thread = Thread::new(
+            "goal",
+            crate::types::thread::ThreadType::Foreground,
+            ProjectId::new(),
+            "test-user",
+            crate::types::thread::ThreadConfig::default(),
+        );
+        thread.metadata = serde_json::json!({
+            "conversation_scope": uuid::Uuid::new_v4().to_string(),
+            "v1_conversation_id": uuid::Uuid::new_v4().to_string(),
+        });
+        thread.transition_to(ThreadState::Running, None).unwrap();
+
+        let result = execute_orchestrator(
+            r#"
+llm_result = __llm_complete__([{"role": "user", "content": "hi"}], [], {})
+FINAL({"outcome": "completed", "response": llm_result["content"]})
+"#,
+            &mut thread,
+            &llm,
+            &effects,
+            &leases,
+            &policy,
+            &mut signal_rx,
+            None,
+            None,
+            Some(&store),
+            None,
+            &gate_controller,
+            &serde_json::json!({}),
+        )
+        .await
+        .expect("execute orchestrator");
+
+        assert!(matches!(
+            result.outcome,
+            ThreadOutcome::Completed { response: Some(_) }
+        ));
+        let captured = concrete.captured.lock().await;
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0].metadata,
+            thread.llm_usage_metadata(LlmCallPurpose::Chat)
+        );
     }
 
     #[tokio::test]
@@ -4480,7 +4583,7 @@ mod tests {
 
         let captured = concrete.captured.lock().await;
         assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0], None);
+        assert_eq!(captured[0].model, None);
     }
 
     #[tokio::test]

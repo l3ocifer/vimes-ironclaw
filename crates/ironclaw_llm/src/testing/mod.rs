@@ -42,7 +42,7 @@ pub fn nearai_test_config(model: impl Into<String>) -> crate::config::LlmConfig 
         provider: None,
         bedrock: None,
         gemini_oauth: None,
-        request_timeout_secs: 120,
+        request_timeout_secs: crate::config::DEFAULT_REQUEST_TIMEOUT_SECS,
         cheap_model: None,
         smart_routing_cascade: true,
         openai_codex: None,
@@ -230,6 +230,7 @@ impl LlmProvider for StubLlm {
             input_tokens: 10,
             output_tokens: 5,
             finish_reason: FinishReason::Stop,
+            reasoning: None,
             cache_read_input_tokens: 0,
             cache_creation_input_tokens: 0,
         })

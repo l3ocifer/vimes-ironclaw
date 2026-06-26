@@ -21,6 +21,26 @@ DENIAL_PATTERN = re.compile(
 
 CANNED_RESPONSES = [
     (re.compile(r"empty routine response", re.IGNORECASE), ""),
+    # Reborn attachment e2e: the inbound pipeline extracts a document's text
+    # and folds it into the model-visible <attachments> block. A unique marker
+    # in the uploaded file proves the extracted text reached the prompt.
+    (
+        re.compile(r"IRONCLAW_ATTACHMENT_MARKER_4644", re.IGNORECASE),
+        "I can read the attached document text.",
+    ),
+    # Markdown link reply for the WebChat v2 "links open in a new tab" smoke.
+    # The renderer must add target=_blank to the rendered anchor.
+    (re.compile(r"link test", re.IGNORECASE),
+     "See [the pull request](https://example.com/pr/1) for details."),
+    # Reborn v2 download chips: after the agent writes a CSV and a PDF (the
+    # write_file dispatch lives in TOOL_CALL_PATTERNS), it replies referencing
+    # their /workspace paths so the WebUI renders downloadable file chips. Fires
+    # after the tool calls run (match_tool_call dedups the already-run writes).
+    (
+        re.compile(r"produce a downloadable csv and pdf", re.IGNORECASE),
+        "Done — I saved /workspace/report.csv and /workspace/report.pdf. "
+        "Both are ready to download.",
+    ),
     (re.compile(r"\bhello\b|\bhi\b|\bhey\b", re.IGNORECASE), "Hello! How can I help you today?"),
     (re.compile(r"2\s*\+\s*2|two plus two", re.IGNORECASE), "The answer is 4."),
     (
@@ -80,6 +100,7 @@ CANNED_RESPONSES = [
      "I found the information you requested."),
 ]
 DEFAULT_RESPONSE = "I understand your request."
+EMULATE_GITHUB_BEARER = "ghp_emulate_github_token"
 
 TOOL_FAILURE_TRIGGER = re.compile(r"issue 1780 tool failure", re.IGNORECASE)
 TRUNCATED_TOOL_CALL_TRIGGER = re.compile(
@@ -103,6 +124,10 @@ GCAL_LIFECYCLE_TRIGGER = re.compile(
     r"create a google calendar event titled",
     re.IGNORECASE,
 )
+GDRIVE_UPLOAD_LIFECYCLE_TRIGGER = re.compile(
+    r"upload a google drive file titled",
+    re.IGNORECASE,
+)
 NOTION_SEARCH_LIFECYCLE_TRIGGER = re.compile(
     r"search notion for .*, then search again",
     re.IGNORECASE,
@@ -119,6 +144,33 @@ TOOL_CALL_PATTERNS = [
         ],
     ),
     (re.compile(r"echo (.+)", re.IGNORECASE), "echo", lambda m: {"message": m.group(1)}),
+    # Reborn v2 download chips: one assistant turn writes a CSV and a PDF into
+    # the project workspace. After both results land, match_tool_call dedups
+    # write_file and the conversation falls through to the CANNED_RESPONSES
+    # reply that references the two paths.
+    (
+        re.compile(r"produce a downloadable csv and pdf", re.IGNORECASE),
+        "write_file",
+        lambda _: [
+            {
+                "tool_name": "write_file",
+                "arguments": {
+                    "path": "/workspace/report.csv",
+                    "content": "name,score\nalice,90\nbob,85\n",
+                },
+            },
+            {
+                "tool_name": "write_file",
+                "arguments": {
+                    "path": "/workspace/report.pdf",
+                    "content": (
+                        "%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\n"
+                        "trailer<</Root 1 0 R>>\n%%EOF\n"
+                    ),
+                },
+            },
+        ],
+    ),
     (
         re.compile(
             r"install https://github\.com/Pika-Labs/Pika-Skills/?(?=$|\s)",
@@ -938,11 +990,18 @@ def _derive_skill_name_from_url(url: str) -> str:
     return slug or "remote-skill"
 
 
-def _conversation_wants_slow_response(messages: list[dict]) -> bool:
-    return _conversation_has_user_trigger(
+def _conversation_slow_response_delay(messages: list[dict]) -> float:
+    if _conversation_has_user_trigger(
+        messages,
+        re.compile(r"editable composer slow response", re.IGNORECASE),
+    ):
+        return 5.0
+    if _conversation_has_user_trigger(
         messages,
         re.compile(r"refresh-mid-response|slow response|slowly", re.IGNORECASE),
-    )
+    ):
+        return 2.0
+    return 0.0
 
 
 def _assistant_has_phrase(messages: list[dict], phrase: str) -> bool:
@@ -1157,10 +1216,24 @@ def match_response(messages: list[dict]) -> str:
                         "chains to discover DeFi positions and classify them against known protocols."
                     )
 
+    explicit = _explicit_canned_response(content)
+    if explicit is not None:
+        return explicit
+    return DEFAULT_RESPONSE
+
+
+def _explicit_canned_response(content: str) -> str | None:
+    """Return the first ``CANNED_RESPONSES`` match for ``content``, or ``None``
+    when only the default would apply.
+
+    Lets a caller prefer a specific canned reply over a generic fallback
+    (e.g. the post-tool-call summary) without collapsing every unmatched
+    conversation into the default response.
+    """
     for pattern, response in CANNED_RESPONSES:
         if pattern.search(content):
             return response
-    return DEFAULT_RESPONSE
+    return None
 
 
 def _normalize_tool_calls(tool_name: str, value: object) -> list[dict]:
@@ -1239,18 +1312,69 @@ def match_tool_call(messages: list[dict], has_tools: bool) -> list[dict] | None:
         return None
     lower = content.lower()
     recent_tool_results = _find_tool_results(messages)
-    if (
-        ("check gmail unread" in lower or "gmail unread" in lower)
-        and any(
-            tr["name"] == "gmail"
-            and "Extension not installed:" in tr["content"]
+    # #3533: gmail-install-then-retry sequence.
+    #
+    # Turn 1: user says "check gmail unread" → match_tool_call below dispatches
+    #         a direct `gmail` call. Engine rejects with either "Extension not
+    #         installed:" (pre-#3533 wording, from the bridge-side
+    #         not-installed reject — the chat-driven install path was wired up
+    #         here in mock_llm but non-functional because `tool_install` was
+    #         hidden from the agent surface) or "is not callable in this
+    #         execution context" (post-#3533, engine-side preflight rejection,
+    #         tool_install restored on the agent surface).
+    # Turn 2: this branch fires — call `tool_install("gmail")`.
+    # Turn 3: install succeeded → call `gmail` again, this time the engine's
+    #         auth preflight raises an Authentication gate.
+    # Turn 4 (after OAuth completes): mock LLM falls through to the
+    #         tool-result-summary path returning the "Quarterly update" text.
+    if "check gmail unread" in lower or "gmail unread" in lower:
+        # Three engine paths can surface gmail-unavailable depending on
+        # whether gmail is in the registry, installed-but-blocked, or
+        # entirely unknown:
+        #   * "Extension not installed: gmail"           — registry has it, not installed
+        #   * "is not callable in this execution context" — installed but engine-v2 blocked
+        #   * "Tool gmail not found"                      — not even in the dispatcher (workflow-canary stack)
+        # A real LLM would treat all three the same way and reach for
+        # `tool_install`. Mirror that — restricting to the first two
+        # made the workflow-canary `tool_install_chat` probe fall
+        # through to text and never recover.
+        gmail_error = next(
+            (
+                tr
+                for tr in recent_tool_results
+                if tr["name"] == "gmail"
+                and (
+                    "Extension not installed:" in tr["content"]
+                    or "is not callable in this execution context" in tr["content"]
+                    or "Tool gmail not found" in tr["content"]
+                )
+            ),
+            None,
+        )
+        install_done = any(
+            tr["name"] == "tool_install"
+            and "error" not in tr["content"].lower()
             for tr in recent_tool_results
         )
-    ):
-        return [{
-            "tool_name": "tool_install",
-            "arguments": {"name": "gmail"},
-        }]
+        if gmail_error and not install_done:
+            return [{
+                "tool_name": "tool_install",
+                "arguments": {"name": "gmail"},
+            }]
+        if install_done and not any(
+            tr["name"] == "gmail" and "is not callable" not in tr["content"]
+            and "Extension not installed" not in tr["content"]
+            and "Tool gmail not found" not in tr["content"]
+            for tr in recent_tool_results
+        ):
+            # Retry gmail after install — the engine's auth preflight will
+            # raise an Authentication gate, which surfaces the auth card.
+            # After OAuth completes, this re-fires and reaches the actual
+            # gmail tool with the correct `list_messages` action.
+            return [{
+                "tool_name": "gmail",
+                "arguments": {"action": "list_messages"},
+            }]
     if _conversation_has_active_skill(messages, "pikastream-video-meeting"):
         bundle_path = _active_skill_bundle_path(messages, "pikastream-video-meeting")
         if (
@@ -1344,6 +1468,11 @@ def _find_tool_result(messages: list[dict]) -> dict | None:
     """Backward-compat single-result helper used by the special-response path."""
     results = _find_tool_results(messages)
     return results[0] if results else None
+
+
+def _find_named_tool_results(messages: list[dict], name: str) -> list[dict]:
+    """Collect fresh tool results for one tool name."""
+    return [result for result in _find_tool_results(messages) if result.get("name") == name]
 
 
 def _tool_results_include_denial(tool_results: list[dict]) -> bool:
@@ -1483,6 +1612,56 @@ def _extract_calendar_event_id(content: str) -> str | None:
     return None
 
 
+def _extract_drive_file_id(content: str) -> str | None:
+    """Extract the file id from a Google Drive upload/get tool result."""
+    def from_value(value: object) -> str | None:
+        if isinstance(value, dict):
+            for key in ("id", "file_id"):
+                candidate = value.get(key)
+                if isinstance(candidate, str):
+                    return candidate
+            for key in ("file", "output", "result"):
+                candidate = from_value(value.get(key))
+                if candidate:
+                    return candidate
+            for candidate_value in value.values():
+                candidate = from_value(candidate_value)
+                if candidate:
+                    return candidate
+        if isinstance(value, list):
+            for item in value:
+                candidate = from_value(item)
+                if candidate:
+                    return candidate
+        if isinstance(value, str):
+            try:
+                return from_value(json.loads(value))
+            except (json.JSONDecodeError, ValueError, TypeError):
+                return None
+        return None
+
+    try:
+        parsed = json.loads(content)
+        extracted = from_value(parsed)
+        if extracted:
+            return extracted
+    except (json.JSONDecodeError, ValueError, TypeError):
+        pass
+    m = re.search(r'"(?:id|file_id)"\s*:\s*"([^"]+)"', content)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _extract_drive_file_id_from_results(tool_results: list[dict]) -> str | None:
+    """Extract a Drive file id from any prior lifecycle tool result."""
+    for result in tool_results:
+        file_id = _extract_drive_file_id(result.get("content", ""))
+        if file_id:
+            return file_id
+    return None
+
+
 def _tomorrow_10am_utc() -> str:
     """Return an RFC3339 timestamp for tomorrow at 10:00 UTC."""
     from datetime import datetime, timedelta, timezone
@@ -1581,7 +1760,7 @@ def match_special_response(messages: list[dict], has_tools: bool) -> dict | None
     if m and has_tools:
         owner = m.group("owner")
         repo = m.group("repo")
-        tool_results = _find_tool_results(messages)
+        tool_results = _find_named_tool_results(messages, "github")
         n = len(tool_results)
         if n == 0:
             return {
@@ -1638,7 +1817,7 @@ def match_special_response(messages: list[dict], has_tools: bool) -> dict | None
     m = GMAIL_ROUNDTRIP_TRIGGER.search(last_user)
     if m and has_tools:
         email = m.group("email")
-        tool_results = _find_tool_results(messages)
+        tool_results = _find_named_tool_results(messages, "gmail")
         n = len(tool_results)
         if n == 0:
             subject = _extract_canary_subject(last_user)
@@ -1686,7 +1865,7 @@ def match_special_response(messages: list[dict], has_tools: bool) -> dict | None
 
     # ── Lifecycle canary: Google Calendar create → list → delete ─────────
     if GCAL_LIFECYCLE_TRIGGER.search(last_user) and has_tools:
-        tool_results = _find_tool_results(messages)
+        tool_results = _find_named_tool_results(messages, "google_calendar")
         n = len(tool_results)
         if n == 0:
             title = _extract_canary_title(last_user)
@@ -1733,6 +1912,39 @@ def match_special_response(messages: list[dict], has_tools: bool) -> dict | None
         return {
             "type": "text",
             "text": "google_calendar lifecycle complete. Event created, verified, and deleted.",
+        }
+
+    # ── Lifecycle canary: Google Drive upload → download ────────────────
+    if GDRIVE_UPLOAD_LIFECYCLE_TRIGGER.search(last_user) and has_tools:
+        tool_results = _find_named_tool_results(messages, "google_drive")
+        n = len(tool_results)
+        title = _extract_canary_title(last_user)
+        if n == 0:
+            return {
+                "type": "tool_call",
+                "tool_call": {
+                    "tool_name": "google_drive",
+                    "arguments": {
+                        "action": "upload_file",
+                        "name": title,
+                        "content": f"Canary Google Drive content for {title}",
+                        "mime_type": "text/plain",
+                    },
+                },
+            }
+        if n == 1:
+            file_id = _extract_drive_file_id_from_results(tool_results)
+            if file_id:
+                return {
+                    "type": "tool_call",
+                    "tool_call": {
+                        "tool_name": "google_drive",
+                        "arguments": {"action": "download_file", "file_id": file_id},
+                    },
+                }
+        return {
+            "type": "text",
+            "text": "google_drive lifecycle complete. File uploaded and downloaded.",
         }
 
     # ── Lifecycle canary: Notion search → search again ────────────────────
@@ -1805,8 +2017,9 @@ async def chat_completions(request: web.Request) -> web.StreamResponse:
     has_tools = bool(body.get("tools"))
     cid = f"mock-{uuid.uuid4().hex[:8]}"
 
-    if _conversation_wants_slow_response(messages):
-        await asyncio.sleep(2.0)
+    slow_response_delay = _conversation_slow_response_delay(messages)
+    if slow_response_delay > 0:
+        await asyncio.sleep(slow_response_delay)
 
     # Job-mode conversations (background routine/job execution)
     job_resp = match_job_response(messages, has_tools)
@@ -1834,12 +2047,24 @@ async def chat_completions(request: web.Request) -> web.StreamResponse:
         GITHUB_ISSUE_LIFECYCLE_TRIGGER,
         GMAIL_ROUNDTRIP_TRIGGER,
         GCAL_LIFECYCLE_TRIGGER,
+        GDRIVE_UPLOAD_LIFECYCLE_TRIGGER,
         NOTION_SEARCH_LIFECYCLE_TRIGGER,
     ):
         if special and _conversation_has_user_trigger(messages, lifecycle_trigger):
             return await _dispatch_special_response(request, cid, stream, special)
 
     tool_results = _find_tool_results(messages)
+    # #3533: when a multi-step recovery is in progress (e.g. gmail not
+    # installed → `tool_install` → retry gmail), the next move is another
+    # tool call, not a text summary of the failure. Let `match_tool_call`
+    # take precedence over the tool-result-summary fallback whenever it
+    # has a follow-up call to emit.
+    if tool_results:
+        followup = match_tool_call(messages, has_tools)
+        if followup:
+            if not stream:
+                return _tool_call_response(cid, followup)
+            return await _stream_tool_call(request, cid, followup)
     if (
         not tool_results
         and _conversation_uses_codeact(messages)
@@ -1898,6 +2123,28 @@ async def chat_completions(request: web.Request) -> web.StreamResponse:
                 if not stream:
                     return _text_response(cid, text)
                 return await _stream_text(request, cid, text)
+        # When the latest user message has an explicit canned reply (e.g. the v2
+        # download-chips flow: "produce a downloadable csv and pdf"), return it
+        # once its tool calls have run and `match_tool_call` has dedup'd them,
+        # instead of the generic multi-tool summary below. Only an explicit match
+        # wins — absent one we fall through to the summary.
+        #
+        # Suppress it on a failed/denied run: `CANNED_RESPONSES` triggers are
+        # broad, so a success-style "ready to download" reply must not mask a
+        # tool that was denied or errored — those turns fall through to the
+        # summary so the real outcome stays visible to assertions.
+        tool_run_failed = _tool_results_include_denial(tool_results) or any(
+            "error" in tr.get("content", "").lower() for tr in tool_results
+        )
+        explicit = (
+            None
+            if tool_run_failed
+            else _explicit_canned_response(_last_user_content(messages))
+        )
+        if explicit is not None:
+            if not stream:
+                return _text_response(cid, explicit)
+            return await _stream_text(request, cid, explicit)
         if len(tool_results) == 1:
             tr = tool_results[0]
             text = f"The {tr['name']} tool returned: {tr['content']}"
@@ -2123,6 +2370,12 @@ def _is_google_token_url(url: str) -> bool:
     return "googleapis.com" in lowered or "accounts.google.com" in lowered
 
 
+def _is_github_token_url(url: str) -> bool:
+    if not url:
+        return False
+    return "github.com/login/oauth/access_token" in url.lower()
+
+
 async def oauth_exchange(request: web.Request) -> web.Response:
     """Mock OAuth token exchange proxy for E2E tests.
 
@@ -2164,6 +2417,13 @@ async def oauth_exchange(request: web.Request) -> web.Response:
         if live_refresh:
             resp["refresh_token"] = live_refresh
         return web.json_response(resp)
+
+    if _is_github_token_url(data.get("token_url", "")):
+        return web.json_response({
+            access_token_field: EMULATE_GITHUB_BEARER,
+            "refresh_token": "mock-github-refresh-token",
+            "expires_in": 3600,
+        })
 
     return web.json_response({
         access_token_field: f"mock-token-{code}",
