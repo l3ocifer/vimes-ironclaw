@@ -1574,6 +1574,14 @@ pub enum CapabilityOutcome {
         gate_ref: LoopGateRef,
         safe_summary: String,
     },
+    /// The model called a client-supplied ("external") tool. The host does not
+    /// execute it: the run parks and control returns to the API client, which
+    /// resumes by submitting the tool output. Carries only the opaque gate ref
+    /// and a bounded safe summary (never the raw caller tool args or output).
+    ExternalToolPending {
+        gate_ref: LoopGateRef,
+        safe_summary: String,
+    },
     SpawnedProcess(ProcessHandleSummary),
     AwaitDependentRun {
         gate_ref: LoopGateRef,
@@ -1607,6 +1615,7 @@ impl CapabilityOutcome {
             Self::ApprovalRequired { .. }
                 | Self::AuthRequired { .. }
                 | Self::ResourceBlocked { .. }
+                | Self::ExternalToolPending { .. }
                 | Self::AwaitDependentRun { .. }
                 | Self::SpawnedProcess(_)
         )
@@ -2190,6 +2199,7 @@ pub enum LoopGateKind {
     Auth,
     ResourceWait,
     AwaitDependentRun,
+    ExternalTool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
