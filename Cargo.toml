@@ -185,7 +185,7 @@ pgvector = { version = "0.4", features = ["postgres"], optional = true }
 # fix for RUSTSEC-2026-0149 (path_open(TRUNCATE) bypassing
 # FilePerms::WRITE), first available in 44.0.2; 43.x is end-of-life for
 # these advisories.
-wasmtime = { version = "44.0.3", features = ["component-model"] }
+wasmtime = { version = "46.0.1", features = ["component-model"] }
 wasmtime-wasi = "44.0.3"  # WASI support for component model
 wasmparser = "0.246.2"  # WASM binary parsing for validation
 
