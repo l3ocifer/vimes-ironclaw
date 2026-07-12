@@ -9,4 +9,4 @@ publish = false
 thiserror = "2"
 tracing = "0.1"
 wasmtime = { version = "44.0.3", features = ["component-model"] }
-wasmtime-wasi = "44.0.3"
+wasmtime-wasi = "46.0.1"
