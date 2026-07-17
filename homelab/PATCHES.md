@@ -4,19 +4,16 @@ Track non-additive changes (anything outside `homelab/`).
 
 ## Active patches
 
-### `crates/ironclaw_skills/src/registry.rs` — sha256 hex format
+_(none today — Vimes ships pure-vanilla IronClaw, customized only via
+configs in `homelab/config/`)_
 
-Upstream uses `format!("sha256:{:x}", result)` where `result =
-Sha256::finalize()`. With rustc 1.92 + edition 2024 + generic-array 0.14,
-the `LowerHex` trait is no longer auto-implemented on the
-`GenericArray<u8, ...>` output, producing the upstream-tracked compile
-error E0277.
+## Retired patches
 
-Our `homelab/Dockerfile` applies a build-time `sed` patch that swaps
-the format to a byte-iter hex encode (`result.iter().map(|b|
-format!("{:02x}", b)).collect::<String>()`), which uses `LowerHex` on
-individual `u8`s and always works.
+### `crates/ironclaw_skills/src/registry.rs` — sha256 hex format (retired 2026-07-17)
 
-**Drop this when:** upstream `nearai/ironclaw` fixes registry.rs to use
-`hex::encode` (or equivalent). Then the upstream-sync workflow's auto-PR
-will surface the change and `homelab/Dockerfile` can drop the `sed`.
+Upstream used `format!("sha256:{:x}", result)` which stopped compiling
+with rustc 1.92 + edition 2024 + generic-array 0.14 (E0277). Our
+`homelab/Dockerfile` carried a build-time `sed` swapping it for a
+byte-iter hex encode. Upstream now uses `hex::encode` in registry.rs,
+so the patch (and its Dockerfile `RUN`) was dropped with the
+2026-07-17 upstream merge (`merge: upstream ironclaw @ 81dbdc6d0`).
