@@ -4,8 +4,17 @@ Track non-additive changes (anything outside `homelab/`).
 
 ## Active patches
 
-_(none today — Vimes ships pure-vanilla IronClaw, customized only via
-configs in `homelab/config/`)_
+### heartbeat-tool-exec: execute tool calls in the periodic heartbeat loop
+
+- **Files**: `src/agent/heartbeat.rs`, `src/agent/agent_loop.rs`, `src/agent/commands.rs`, `src/main.rs`
+- **Reason**: upstream's heartbeat turn renders tool calls but never
+  executes them, so autonomous cron/heartbeat turns could not act.
+  Adds tool execution to the heartbeat loop (originally shipped
+  2026-06-25, `fix(heartbeat): execute tool calls in the periodic
+  heartbeat loop`).
+- **Upstream PR**: not yet submitted.
+- **Last applied**: 2026-07-17 against upstream@81dbdc6d0 (clean merge,
+  no reapply needed).
 
 ## Retired patches
 
