@@ -147,6 +147,24 @@ Worth Vimes's own attention either way: this is the security agent, and
 for the first hours of the Reborn cutover it ran its state store in
 cleartext.
 
+### Do not sync from `upstream/staging` any more (2026-07-26)
+
+The pre-Reborn sync procedure for this repo merged `upstream/staging`. That
+branch is now a trap: its tip is **2026-05-06** and its tree still contains the
+v1 monolith (`src/`, `build.rs`, `channels-src/`). Merging it reports as a
+one-commit fast-forward — the misleadingly small `git rev-list --count
+HEAD..upstream/staging` — but resolves as a pile of modify/delete conflicts
+whose "resolution" would restore every v1 file the Reborn cutover removed, and
+the homelab Dockerfile would then build the wrong tree.
+
+The live line is **`upstream/main`**. Verify before every sync rather than
+trusting the count:
+
+    git log -1 --format='%ci' upstream/main
+    git ls-tree --name-only upstream/main src/     # must be empty post-Reborn
+
+An `src/` that is *not* empty means the ref predates the Reborn cutover.
+
 ### Not carried over — verify before trusting these
 
 `openclaw.json` also configured things with no Reborn equivalent wired up
