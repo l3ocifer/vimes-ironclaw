@@ -151,7 +151,7 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: hooks-parity
           # Keep saves to protected-branch and merge_group runs so the ~10 GB
@@ -201,7 +201,7 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: windows-${{ matrix.name }}
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -253,7 +253,7 @@ jobs:
         run: |
           cd crates/ironclaw_webui/frontend
           pnpm install --frozen-lockfile
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: wasm-extensions
           # Keep saves to protected-branch and merge_group runs so the ~10 GB
@@ -299,7 +299,7 @@ jobs:
         run: |
           cd crates/ironclaw_webui/frontend
           pnpm install --frozen-lockfile
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: bench
           save-if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}

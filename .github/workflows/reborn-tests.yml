@@ -282,7 +282,7 @@ jobs:
           test -x /usr/bin/mold
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # ONE shared cache for all ~60 crate-test jobs instead of a per-crate
           # key. Per-crate keys produced ~60 caches (registry + target each,
@@ -421,7 +421,7 @@ jobs:
           test "$(/tmp/mold-link-check)" = "mold-link-ok"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # All 4 root partitions compile the *same* root-package build (they
           # only run different test partitions), so one shared cache is strictly
@@ -505,7 +505,7 @@ jobs:
           test "$(/tmp/mold-link-check)" = "mold-link-ok"
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # REUSE the root partitions' cache key: the group `[[test]]` binaries
           # are part of the same root package build as the reborn_*.rs root tests,
@@ -587,7 +587,7 @@ jobs:
           test -x /usr/bin/mold
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           # ONE shared key across all 5 instrumented lanes: they all
           # instrument the same workspace build, so a per-lane key would just
@@ -788,7 +788,7 @@ jobs:
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Restore Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: reborn-qa-recorded-fixtures
           save-if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'merge_group' }}
