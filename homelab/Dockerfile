@@ -152,8 +152,10 @@ RUN curl -sSfL https://aquasecurity.github.io/trivy-repo/deb/public.key \
  && rm -rf /var/lib/apt/lists/*
 
 # kubescape — k8s posture
+# No -v flag: upstream removed the 'latest' release alias asset (404s since
+# 2026-08), so let install.sh resolve the actual latest release tag itself.
 RUN curl -sSfL https://raw.githubusercontent.com/kubescape/kubescape/master/install.sh \
-      | /bin/bash -s -- -v latest
+      | /bin/bash -s --
 
 # gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
