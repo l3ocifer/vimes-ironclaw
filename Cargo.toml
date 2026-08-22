@@ -18,7 +18,7 @@ wasmtime = { version = "46.0.1", features = ["component-model"] }
 # Only the WASI p2 host API is linked (`p2::add_to_linker_sync`). Keeping
 # defaults off avoids compiling unused p0/p1 WITX proc macros under remote CI
 # sccache workers, where registry sidecar WITX files are not present.
-wasmtime-wasi = { version = "46.0.1", default-features = false, features = ["p2"] }
+wasmtime-wasi = { version = "48.0.0", default-features = false, features = ["p2"] }
 
 # Maintainability guardrails against dead/speculative public API
 # (the "Theme 1" anti-pattern from the maintainability audit: accessors,
