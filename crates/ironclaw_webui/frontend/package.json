@@ -3,11 +3,11 @@
   "version": "0.0.0",
   "private": true,
   "description": "Build tooling for the WebUI v2 SPA. Vite builds the TypeScript source and public assets into ignored dist/ output that Rust embeds when webui-v2-beta is enabled.",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@12.3.4",
   "type": "module",
   "engines": {
     "node": ">=22 <23",
-    "pnpm": ">=11 <12"
+    "pnpm": ">=11 <13"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
