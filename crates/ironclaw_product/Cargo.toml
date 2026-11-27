@@ -22,7 +22,7 @@ host-auth-mint = ["ironclaw_host_api/host-auth-mint", "ironclaw_turns/host-auth-
 
 [dependencies]
 async-trait = "0.1"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 ironclaw_common = { path = "../ironclaw_common", version = "0.4.1" }
@@ -93,4 +93,4 @@ tokio-util = { version = "0.7", features = ["rt"] }
 # embedded; Postgres leg needs a DB URL.
 deadpool-postgres = "0.14"
 tokio-postgres = "0.7"
-libsql = { version = "0.9", default-features = false, features = ["core", "replication", "remote", "tls"] }
+libsql = { version = "0.10", default-features = false, features = ["core", "replication", "remote", "tls"] }

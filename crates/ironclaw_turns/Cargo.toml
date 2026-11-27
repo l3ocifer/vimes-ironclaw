@@ -51,7 +51,7 @@ ironclaw_filesystem = { path = "../ironclaw_filesystem", version = "0.1.0", feat
 ] }
 # Test-only: the durable-read perf harness (`events_query_stress`) builds a real
 # libSQL-backed store.
-libsql = { version = "0.9", default-features = false, features = [
+libsql = { version = "0.10", default-features = false, features = [
     "core",
     "replication",
     "remote",
